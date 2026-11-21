@@ -11,8 +11,9 @@ startup and Laravel database connectivity have also been verified. Both
 forecast migrations have run, and PostgreSQL column types and constraints have
 been inspected. Both providers and the models are implemented. Live checks of
 Open-Meteo and WeatherAPI each returned 72 hourly and three daily rows for the
-configured location. Persistence orchestration, scheduling and the forecast API
-come later. The current suite passes (44 tests, 254 assertions).
+configured location. The collection command's live save is verified: 144 hourly
+and six daily rows across both providers. Scheduling and the forecast API come later. The current
+suite passes (52 tests, 325 assertions).
 
 ## Setup and running
 
@@ -275,6 +276,33 @@ Migration rollback and re-application were verified in a disposable PostgreSQL
 database, which was removed afterward. Repeatable persistence tests are described
 below.
 
+## Collecting forecasts
+
+After migrations, collect and save forecasts with:
+
+```sh
+docker compose exec app php artisan forecast:collect
+```
+
+`app/Console/Commands/CollectForecasts.php` holds the orchestration in one class.
+Laravel supplies the two provider objects to its `handle()` method. The command
+validates configured coordinates/time zone and resolves today's local date once
+for both providers. Each response's hourly and daily rows are inserted in one
+database transaction. Any save failure rolls back that response; the other
+provider is still attempted and its successful data is preserved.
+
+New collections append history. An exact repeated response is rejected by the
+database unique constraint instead of overwriting existing rows. Provider receipt
+timestamps are preserved; the command does not replace them with a start time.
+The command adds no HTTP retries or database-save retries of its own.
+
+Console output and application logs report each provider, committed row counts,
+safe failure reasons and a final summary. Failed responses count as zero saved
+rows. Exit status is `0` when both succeed, `1` if either fails or required
+location configuration is invalid. Database errors report SQLSTATE without SQL
+bindings; API keys are redacted from provider failure reasons. Scheduling is
+added separately; collection currently runs only when this command is invoked.
+
 ## Running tests
 
 PHPUnit and Mockery are development dependencies installed by `composer install`.
@@ -310,6 +338,12 @@ settings and the approved retry limits. No live key or network call is needed.
 `tests/Feature/WeatherApiProviderTest.php` adds 18 fake-response cases for field
 mapping, receipt time, missing configuration, date coverage, DST, malformed data,
 retry limits and secret-safe failures. Tests use a fake key, not the real one.
+
+`tests/Feature/CollectForecastsTest.php` tests collection with mocked providers
+and real PostgreSQL transactions: preserving receipt timestamps and history,
+one shared date window across midnight, duplicate rejection, provider isolation,
+rollback of a response's hourly rows when daily insertion fails, committed counts,
+exit statuses, missing location settings and API-key redaction.
 
 ## Compose basics
 
