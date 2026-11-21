@@ -5,3 +5,12 @@
 
 /AGENTS.md
 /agent-instructions/
+
+# Composer dependencies, temporary scaffolding, and runtime files
+/vendor/
+/.laravel-scaffold/
+/.phpunit.cache/
+/.phpunit.result.cache
+/auth.json
+/public/storage
+/storage/*.key
