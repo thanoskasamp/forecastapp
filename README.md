@@ -32,6 +32,14 @@ In Command Prompt:
 if not exist .env copy .env.example .env
 ```
 
+Before starting Compose services or running one-off app containers, set your own
+`DB_PASSWORD` in `.env` as described under PostgreSQL configuration below.
+All project configuration reads environment variables without fallback values.
+For an existing `.env`, add missing non-secret entries from `.env.example` while
+preserving your existing credentials and `APP_KEY`. The example contains the
+initial values for this project. Unused integrations such as mail, Redis and
+cloud storage can remain unconfigured; their settings are not required here.
+
 Build the PHP 8.5 / Composer 2.11.2 image, then install the dependencies declared
 in `composer.json` (skip installation if they are already installed):
 
@@ -67,11 +75,14 @@ DB_HOST=db
 DB_PORT=5432
 DB_DATABASE=forecastapp
 DB_USERNAME=forecastapp
-DB_PASSWORD=local-development-only
+DB_PASSWORD=
 ```
 
-The password is a local-development example. Real local credentials stay in the
-ignored `.env`. `db` is the Compose service hostname: from the app container,
+Set `DB_PASSWORD` to your own password in the ignored `.env` before first startup.
+The example leaves it blank; configuration has no fallback database credentials
+or API keys. If PostgreSQL is already initialized, changing `.env` alone does not
+change its stored role password; update the role password to match as well.
+`db` is the Compose service hostname: from the app container,
 `localhost` refers to the app container itself.
 
 The Dockerfile installs `pdo_pgsql`, PHP's PostgreSQL driver, using the `libpq`
@@ -122,6 +133,32 @@ The root route returns `{"name":"ForecastApp","status":"ok"}` with the name
 coming from `APP_NAME`. `/up` is Laravel's startup health route. Stop the server
 with Ctrl+C. The root response verifies HTTP startup; use `db:show` separately to
 verify database connectivity. Provider behavior is implemented in later steps.
+
+## Forecast configuration
+
+`config/forecast.php` reads all its values from `.env`, with no fallback values.
+For collection and scheduling, add the five `FORECAST_*` entries below. The
+values shown are the approved initial settings, also included in `.env.example`:
+
+| Variable | Initial value | Purpose |
+|---|---|---|
+| `FORECAST_LAT` | `40.626430` | Collection latitude in Chalastra, Thessaloniki |
+| `FORECAST_LON` | `22.732910` | Collection longitude |
+| `FORECAST_LOCATION_TIMEZONE` | `Europe/Athens` | Local calendar dates for the three-day forecast window |
+| `FORECAST_COLLECTION_TIME` | `06:00` | Daily collection time, using 24-hour `HH:MM` format |
+| `FORECAST_SCHEDULE_TIMEZONE` | `Europe/Athens` | Time zone used for the collection schedule |
+| `WEATHERAPI_KEY` | Unset | WeatherAPI credential, required when its integration is implemented |
+
+For an existing `.env`, add all five forecast settings and your own WeatherAPI
+key before using that provider. Keep existing database credentials and `APP_KEY`.
+The key belongs only in the ignored `.env`. Application code will read these
+settings through `config('forecast.location.lat')`, for example, rather than
+calling `env()` directly. Coordinates remain strings to retain decimal precision.
+
+The location and schedule time zones have separate purposes; Laravel and
+PostgreSQL remain on UTC for timestamps. The forecast horizon stays today,
+tomorrow, and the day after in the location time zone. Settings alone do not call
+providers or start a collection schedule; those features are implemented later.
 
 ## Forecast migrations
 
