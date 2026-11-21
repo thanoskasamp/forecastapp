@@ -9,9 +9,10 @@ Dependency installation, Laravel CLI startup, and the root JSON HTTP response
 have been verified using Docker directly and through Compose. PostgreSQL 17.12
 startup and Laravel database connectivity have also been verified. Both
 forecast migrations have run, and PostgreSQL column types and constraints have
-been inspected. Collection and the forecast API come later.
-The two forecast models are implemented. The persistence test suite passes
-against PostgreSQL (eight tests, 32 assertions).
+been inspected. The models and Open-Meteo provider are implemented; a live
+Open-Meteo check returned 72 hourly and three daily rows for the configured
+location. WeatherAPI, persistence orchestration, scheduling and the forecast API
+come later. The current suite passes (26 tests, 175 assertions).
 
 ## Setup and running
 
@@ -132,7 +133,7 @@ Keep the terminal running and visit [http://localhost:8000](http://localhost:800
 The root route returns `{"name":"ForecastApp","status":"ok"}` with the name
 coming from `APP_NAME`. `/up` is Laravel's startup health route. Stop the server
 with Ctrl+C. The root response verifies HTTP startup; use `db:show` separately to
-verify database connectivity. Provider behavior is implemented in later steps.
+verify database connectivity. Collection and the forecast API come later.
 
 ## Forecast configuration
 
@@ -158,7 +159,46 @@ calling `env()` directly. Coordinates remain strings to retain decimal precision
 The location and schedule time zones have separate purposes; Laravel and
 PostgreSQL remain on UTC for timestamps. The forecast horizon stays today,
 tomorrow, and the day after in the location time zone. Settings alone do not call
-providers or start a collection schedule; those features are implemented later.
+providers or start a collection schedule. The collector and scheduler come later.
+
+## Open-Meteo provider
+
+`app/Weather/ForecastProvider.php` defines the small common provider interface.
+Its `fetch` method accepts coordinates and one start date in the location time
+zone, returning `hourly` and `daily` arrays of rows in the database field shape.
+The collector will resolve this date once for both providers and save the rows;
+the adapter itself only requests and normalizes data.
+
+In `OpenMeteoProvider`, `fetch()` coordinates three steps: `requestForecast()`
+performs the HTTP request and captures the receipt time; `hourlyRows()` maps
+hour-specific fields to UTC rows; `dailyRows()` maps provider daily summaries to
+date-only rows. Both mapping methods use the same collection/provider/coordinate
+fields. The mappings are explicit, with no resolution-dependent field switching.
+
+`OpenMeteoProvider` requests hourly `temperature_2m` / `precipitation` and daily
+`temperature_2m_mean` / `precipitation_sum`, explicitly selecting °C and mm.
+Hourly precipitation covers the preceding hour; timestamps retain the provider's
+labels. Daily values remain provider-supplied summaries. Configured coordinates
+are retained even when the provider's grid-cell coordinates differ.
+[Open-Meteo API documentation](https://open-meteo.com/en/docs).
+
+Unix timestamps and explicit hourly bounds preserve the three local dates,
+including 71/73-hour windows around daylight-saving changes. Open-Meteo uses a
+fixed request-time UTC offset for daily boundaries; its daily summaries therefore
+remain provider-defined 24-hour aggregates across DST. The adapter preserves the
+provider's daily labels, filters to the selected dates, and rejects incomplete
+coverage. It does not recompute daily values from hourly rows.
+
+All rows from a response share its received UTC `collected` timestamp. NULL
+measurements stay unavailable; zero stays zero. Malformed responses and unexpected
+units are rejected. Each request has a 10-second timeout and at most two attempts:
+retry network failures/timeouts or HTTP 5xx once after one second; do not retry
+HTTP 4xx/429. Redirects are disabled. Errors contain a provider/status description
+rather than raw response bodies or URLs.
+
+The free endpoint does not need a key. Its non-commercial limits include 10,000
+calls/day, 5,000/hour and 600/minute, and attribution is required. Data source:
+[Open-Meteo](https://open-meteo.com/), under [its terms](https://open-meteo.com/en/terms).
 
 ## Forecast migrations
 
@@ -230,6 +270,10 @@ its tables can be recreated. A check in `tests/TestCase.php` requires the testin
 environment and the actual PostgreSQL database `forecastapp_test` before database
 refresh can run. Tests do not call weather providers.
 
+`tests/Feature/OpenMeteoProviderTest.php` adds 18 cases with fake HTTP responses:
+field mapping, receipt timestamps, missing/malformed data, DST boundaries, timeout
+settings and the approved retry limits. No live key or network call is needed.
+
 ## Compose basics
 
 `compose.yaml` defines the app and database services. For `app`:
@@ -270,6 +314,7 @@ service will be introduced in a later step.
   use synchronous execution, so this skeleton needs no cache/queue tables.
 - `database/migrations/`: table definitions applied by `php artisan migrate`.
 - `app/Models/`: the hourly and daily forecast models used for database access.
+- `app/Weather/`: the common provider interface and Open-Meteo adapter.
 - `storage/`: writable runtime directories; their generated contents are ignored.
 
 Frontend assets, example user code, and default user/cache/jobs migrations are
