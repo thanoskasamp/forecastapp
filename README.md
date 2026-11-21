@@ -6,9 +6,9 @@ A web application developed for the AgroApps technical assignment.
 
 The PHP/Composer Docker toolbox and backend Laravel skeleton are prepared.
 Dependency installation, Laravel CLI startup, and the root JSON HTTP response
-have been verified using Docker directly and through the app-only Compose
-service. PostgreSQL, collection, and the forecast API will be added in later
-steps.
+have been verified using Docker directly and through Compose. PostgreSQL 17.12
+startup and Laravel database connectivity have also been verified. The database
+is empty; forecast migrations, collection, and the forecast API come later.
 
 ## Setup and running
 
@@ -51,8 +51,50 @@ Verify that Laravel's command-line tool starts:
 docker compose run --rm app php artisan --version
 ```
 
-Expected output starts with `Laravel Framework 13.`. Database connectivity will
-be configured and verified in a subsequent step.
+Expected output starts with `Laravel Framework 13.`.
+
+## PostgreSQL configuration
+
+For an existing `.env`, add/update these database settings while keeping the
+existing `APP_KEY` and other settings:
+
+```dotenv
+DB_CONNECTION=pgsql
+DB_HOST=db
+DB_PORT=5432
+DB_DATABASE=forecastapp
+DB_USERNAME=forecastapp
+DB_PASSWORD=local-development-only
+```
+
+The password is a local-development example. Real local credentials stay in the
+ignored `.env`. `db` is the Compose service hostname: from the app container,
+`localhost` refers to the app container itself.
+
+The Dockerfile installs `pdo_pgsql`, PHP's PostgreSQL driver, using the `libpq`
+client development library. Rebuild the app image after this Dockerfile change.
+PostgreSQL 17 runs separately in the `db` service, with no host port published.
+The named `postgres_data` volume retains database files across normal container
+replacement and `docker compose down` / `up` cycles. App source still uses the
+existing `.:/app` bind mount.
+
+Compose waits for `pg_isready` to report the database healthy before starting
+`app`. This also applies when a one-off `run app ...` command starts its
+dependency. The app reads its DB settings through Laravel's `.env` loading;
+Compose supplies the matching initialization settings to PostgreSQL.
+The Compose file references environment variables only for these settings; it
+contains no hardcoded database name, username, or password fallback. Set them
+in the ignored `.env` before starting the services.
+
+After startup, verify that Laravel can connect without creating tables:
+
+```sh
+docker compose exec app php artisan db:show
+```
+
+The expected database is `forecastapp` on PostgreSQL. This step does not run
+migrations; the forecast tables are added separately. The PostgreSQL connection
+uses UTC for timestamp handling.
 
 Before testing HTTP routes, generate Laravel's application key once if `APP_KEY`
 is empty in `.env`:
@@ -75,18 +117,22 @@ docker compose up --build
 Keep the terminal running and visit [http://localhost:8000](http://localhost:8000).
 The root route returns `{"name":"ForecastApp","status":"ok"}` with the name
 coming from `APP_NAME`. `/up` is Laravel's startup health route. Stop the server
-with Ctrl+C. This development server verifies HTTP startup; database/provider
-behavior is implemented in later steps.
+with Ctrl+C. The root response verifies HTTP startup; use `db:show` separately to
+verify database connectivity. Provider behavior is implemented in later steps.
 
 ## Compose basics
 
-`compose.yaml` currently defines just one service, `app`:
+`compose.yaml` defines the app and database services. For `app`:
 
 - `build: .` builds the root Dockerfile and `image` names the result.
 - `ports` maps localhost port 8000 to port 8000 in the container.
 - `volumes: .:/app` shares the project directory rather than copying source into
   the image. It matches the Dockerfile's `/app` working directory.
 - `command` runs the same Laravel development server already tested manually.
+
+For `db`, `image` selects PostgreSQL 17, `environment` uses the `.env` database
+settings, `volumes` retains database files, and `healthcheck` tests readiness.
+`app.depends_on` waits for that healthy state before starting the app.
 
 Useful commands, with the app running:
 
@@ -99,9 +145,9 @@ docker compose down
 
 Use `run --rm app ...` for a temporary one-off container, including initial setup
 before the server starts. Use `exec app ...` to run a command inside the existing
-running app container. `down` removes this project's containers/network, not the
-bind-mounted source or installed packages. PostgreSQL and scheduler services
-will be introduced in separate steps.
+running app container. `down` removes this project's containers/network while
+keeping the source, installed packages, and named database volume. The scheduler
+service will be introduced in a later step.
 
 ## Current structure
 
