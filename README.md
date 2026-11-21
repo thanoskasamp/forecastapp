@@ -7,8 +7,10 @@ A web application developed for the AgroApps technical assignment.
 The PHP/Composer Docker toolbox and backend Laravel skeleton are prepared.
 Dependency installation, Laravel CLI startup, and the root JSON HTTP response
 have been verified using Docker directly and through Compose. PostgreSQL 17.12
-startup and Laravel database connectivity have also been verified. The database
-is empty; forecast migrations, collection, and the forecast API come later.
+startup and Laravel database connectivity have also been verified. Both
+forecast migrations have run, and PostgreSQL column types and constraints have
+been inspected. Collection and the forecast API come later.
+The persistence test suite passes against PostgreSQL (six tests, 20 assertions).
 
 ## Setup and running
 
@@ -120,6 +122,67 @@ coming from `APP_NAME`. `/up` is Laravel's startup health route. Stop the server
 with Ctrl+C. The root response verifies HTTP startup; use `db:show` separately to
 verify database connectivity. Provider behavior is implemented in later steps.
 
+## Forecast migrations
+
+With the services running, apply the migrations and check their status:
+
+```sh
+docker compose exec app php artisan migrate
+docker compose exec app php artisan migrate:status
+```
+
+The two migration files create `hourly_forecasts` and `daily_forecasts`. Laravel
+also creates its standard `migrations` table to track which files have run.
+Both forecast tables contain only `id`, `collected`, `provider`, `lat`, `lon`,
+`time`, `temp`, and `prec`:
+
+- `id` is an automatically generated integer primary key.
+- `collected` is a response-received UTC timestamp with microsecond precision.
+- `provider` is a required string of up to 50 characters (`open_meteo` or `weatherapi`).
+- Coordinates use `DECIMAL(9,6)` and are stored directly in every row.
+- Hourly `time` is a UTC timestamp; daily `time` is a location-local calendar date.
+- `temp` and `prec` use nullable `DECIMAL(8,2)`: NULL means unavailable, zero means
+  a reported zero. Daily values are provider-supplied mean temperature in °C and
+  total precipitation in mm; hourly values remain hour-specific.
+- A unique constraint on `(collected, provider, lat, lon, time)` prevents
+  duplicates within one response while allowing later collections to be retained.
+
+Timestamps use PostgreSQL `timestamp with time zone`; the Laravel connection uses
+UTC. Capturing response receipt times belongs to the later collection code.
+Migrations define storage and constraints; they do not fetch or insert forecasts.
+
+Migration rollback and re-application were verified in a disposable PostgreSQL
+database, which was removed afterward. Repeatable persistence tests are described
+below.
+
+## Running tests
+
+PHPUnit and Mockery are development dependencies installed by `composer install`.
+With the Compose services running, create the dedicated test database once:
+
+```sh
+docker compose exec db createdb -U forecastapp forecastapp_test
+```
+
+Use your configured `DB_USERNAME` instead of `forecastapp` if you changed it.
+Skip this command if the test database already exists. Keep the normal database
+settings in `.env`; `phpunit.xml` selects `forecastapp_test` for tests and reuses
+the connection credentials. No separate environment file is needed.
+
+Run the tests:
+
+```sh
+docker compose exec app vendor/bin/phpunit
+```
+
+`tests/Feature/ForecastPersistenceTest.php` checks duplicate rejection, preservation
+of earlier collections, and NULL versus zero measurements against both tables
+(six test cases). Laravel's `RefreshDatabase` prepares the test tables and rolls
+back each test's inserts. The test database is reserved for disposable test data;
+its tables can be recreated. A check in `tests/TestCase.php` requires the testing
+environment and the actual PostgreSQL database `forecastapp_test` before database
+refresh can run. Tests do not call weather providers.
+
 ## Compose basics
 
 `compose.yaml` defines the app and database services. For `app`:
@@ -158,8 +221,9 @@ service will be introduced in a later step.
 - `routes/web.php`: a small JSON startup response; the forecast API comes later.
 - `config/`: standard Laravel configuration. Cache/sessions use files and queues
   use synchronous execution, so this skeleton needs no cache/queue tables.
+- `database/migrations/`: table definitions applied by `php artisan migrate`.
 - `storage/`: writable runtime directories; their generated contents are ignored.
 
 Frontend assets, example user code, and default user/cache/jobs migrations are
-omitted from this backend skeleton. The agreed forecast tables are not created
-yet. No external weather requests are made by this setup.
+omitted from this backend skeleton. The agreed forecast tables are created by
+the migrations above. No external weather requests are made by this setup.

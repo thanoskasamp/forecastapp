@@ -13,6 +13,11 @@
             "App\\": "app/"
         }
     },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\": "tests/"
+        }
+    },
     "scripts": {
         "post-autoload-dump": [
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
@@ -25,5 +30,9 @@
         "sort-packages": true
     },
     "minimum-stability": "stable",
-    "prefer-stable": true
+    "prefer-stable": true,
+    "require-dev": {
+        "mockery/mockery": "^1.6",
+        "phpunit/phpunit": "^12.5.12"
+    }
 }
