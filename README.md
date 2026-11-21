@@ -9,10 +9,10 @@ Dependency installation, Laravel CLI startup, and the root JSON HTTP response
 have been verified using Docker directly and through Compose. PostgreSQL 17.12
 startup and Laravel database connectivity have also been verified. Both
 forecast migrations have run, and PostgreSQL column types and constraints have
-been inspected. The models and Open-Meteo provider are implemented; a live
-Open-Meteo check returned 72 hourly and three daily rows for the configured
-location. WeatherAPI, persistence orchestration, scheduling and the forecast API
-come later. The current suite passes (26 tests, 175 assertions).
+been inspected. Both providers and the models are implemented. Live checks of
+Open-Meteo and WeatherAPI each returned 72 hourly and three daily rows for the
+configured location. Persistence orchestration, scheduling and the forecast API
+come later. The current suite passes (44 tests, 254 assertions).
 
 ## Setup and running
 
@@ -148,7 +148,7 @@ values shown are the approved initial settings, also included in `.env.example`:
 | `FORECAST_LOCATION_TIMEZONE` | `Europe/Athens` | Local calendar dates for the three-day forecast window |
 | `FORECAST_COLLECTION_TIME` | `06:00` | Daily collection time, using 24-hour `HH:MM` format |
 | `FORECAST_SCHEDULE_TIMEZONE` | `Europe/Athens` | Time zone used for the collection schedule |
-| `WEATHERAPI_KEY` | Unset | WeatherAPI credential, required when its integration is implemented |
+| `WEATHERAPI_KEY` | Unset | Required credential for WeatherAPI collection |
 
 For an existing `.env`, add all five forecast settings and your own WeatherAPI
 key before using that provider. Keep existing database credentials and `APP_KEY`.
@@ -199,6 +199,39 @@ rather than raw response bodies or URLs.
 The free endpoint does not need a key. Its non-commercial limits include 10,000
 calls/day, 5,000/hour and 600/minute, and attribution is required. Data source:
 [Open-Meteo](https://open-meteo.com/), under [its terms](https://open-meteo.com/en/terms).
+
+## WeatherAPI provider
+
+`WeatherApiProvider` implements the same interface and straightforward flow:
+`requestForecast()`, `hourlyRows()`, then `dailyRows()`. It reads
+`config('forecast.weatherapi.key')`, populated from `.env` without a fallback,
+and reports a missing key before sending a request. Authentication sends the key
+as the provider's required HTTPS request parameter; errors omit raw URLs,
+response messages and chained transport exceptions.
+[WeatherAPI authentication](https://www.weatherapi.com/docs/authentication/).
+
+The request uses coordinates, `days=3`, and disables unused alerts/air quality.
+Hourly `temp_c` / `precip_mm` become `temp` / `prec`; `time_epoch` becomes UTC
+`time`. Daily `avgtemp_c` / `totalprecip_mm` supply the agreed mean temperature
+and precipitation total, with the provider's `date` retained. Configured
+coordinates are stored rather than the matched location's rounded coordinates.
+[Forecast fields](https://www.weatherapi.com/docs/forecast-api/).
+
+The response location's time zone must match the configured location zone. The
+adapter selects the shared three local dates and rejects incomplete coverage,
+including a date-window shift across midnight. Epoch hours preserve DST when
+supplied correctly; missing or duplicate hours are rejected rather than invented.
+DST behavior is tested with synthetic responses, not live transition-day data.
+The same received-UTC timestamp, NULL/zero and bounded retry policies apply.
+
+The free plan currently includes three-day hourly/daily forecasts and 100,000
+calls/month. Live verification confirmed the configured key can access all three
+days. [WeatherAPI pricing](https://www.weatherapi.com/pricing).
+Failures report HTTP status and, when present, a numeric provider error code;
+the collector will log them later. [Error codes](https://www.weatherapi.com/docs/error-codes/).
+WeatherAPI documents hourly precipitation as an amount for that forecast hour;
+Open-Meteo explicitly describes a preceding-hour sum. Provider labels are
+preserved, so direct interval equivalence should not be assumed.
 
 ## Forecast migrations
 
@@ -274,6 +307,10 @@ refresh can run. Tests do not call weather providers.
 field mapping, receipt timestamps, missing/malformed data, DST boundaries, timeout
 settings and the approved retry limits. No live key or network call is needed.
 
+`tests/Feature/WeatherApiProviderTest.php` adds 18 fake-response cases for field
+mapping, receipt time, missing configuration, date coverage, DST, malformed data,
+retry limits and secret-safe failures. Tests use a fake key, not the real one.
+
 ## Compose basics
 
 `compose.yaml` defines the app and database services. For `app`:
@@ -310,11 +347,11 @@ service will be introduced in a later step.
 - `public/index.php`: the HTTP request entry point.
 - `bootstrap/app.php`: configures application startup, routes, and errors.
 - `routes/web.php`: a small JSON startup response; the forecast API comes later.
-- `config/`: standard Laravel configuration. Cache/sessions use files and queues
+- `config/`: compact application configuration. Cache/sessions use files and queues
   use synchronous execution, so this skeleton needs no cache/queue tables.
 - `database/migrations/`: table definitions applied by `php artisan migrate`.
 - `app/Models/`: the hourly and daily forecast models used for database access.
-- `app/Weather/`: the common provider interface and Open-Meteo adapter.
+- `app/Weather/`: the common interface and Open-Meteo/WeatherAPI adapters.
 - `storage/`: writable runtime directories; their generated contents are ignored.
 
 Frontend assets, example user code, and default user/cache/jobs migrations are
