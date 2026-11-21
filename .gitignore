@@ -1,0 +1,7 @@
+# Local environment configuration
+.env
+.env.*
+!.env.example
+
+/AGENTS.md
+/agent-instructions/
