@@ -12,8 +12,9 @@ forecast migrations have run, and PostgreSQL column types and constraints have
 been inspected. Both providers and the models are implemented. Live checks of
 Open-Meteo and WeatherAPI each returned 72 hourly and three daily rows for the
 configured location. The collection command's live save is verified: 144 hourly
-and six daily rows across both providers. Scheduling and the forecast API come later. The current
-suite passes (52 tests, 325 assertions).
+and six daily rows across both providers. The forecast read API is
+implemented and verified. Daily scheduling and final delivery checks remain.
+The current suite passes (60 tests, 383 assertions).
 
 ## Setup and running
 
@@ -303,6 +304,32 @@ location configuration is invalid. Database errors report SQLSTATE without SQL
 bindings; API keys are redacted from provider failure reasons. Scheduling is
 added separately; collection currently runs only when this command is invoked.
 
+## Read API
+
+Use `GET /api/forecasts` with required `resolution=hourly` or `resolution=daily`:
+
+```sh
+curl "http://localhost:8000/api/forecasts?resolution=hourly"
+curl "http://localhost:8000/api/forecasts?resolution=daily"
+```
+
+Responses are plain JSON arrays containing all stored rows for the selected
+resolution, with no pagination metadata. Rows are ordered by newest `collected`
+first, then forecast `time` ascending and `id` ascending for stable ordering.
+The response grows as forecast history accumulates.
+
+Every row contains `id`, `collected`, `provider`, `lat`, `lon`, `time`, `temp`
+and `prec`. All stored collections are available, including older predictions
+for the same forecast time. Collection/hourly timestamps are UTC ISO strings;
+daily `time` is `YYYY-MM-DD`. Decimals are fixed-precision JSON strings and
+unavailable measurements are JSON null. A reported zero remains `"0.00"`.
+
+Missing or invalid resolution returns HTTP `422` JSON with a field error under
+`errors.resolution`, including when opened directly in a browser. The controller
+only validates resolution, selects the model and reads stored rows; API
+requests never call providers or trigger collection. No provider key is required
+to read already-stored forecasts. Empty storage returns HTTP 200 with `[]`.
+
 ## Running tests
 
 PHPUnit and Mockery are development dependencies installed by `composer install`.
@@ -345,6 +372,10 @@ one shared date window across midnight, duplicate rejection, provider isolation,
 rollback of a response's hourly rows when daily insertion fails, committed counts,
 exit statuses, missing location settings and API-key redaction.
 
+`tests/Feature/ForecastApiTest.php` checks required-resolution errors, both table
+selections, collection history, date/decimal/null output, returning all rows
+without pagination, empty storage and no outgoing provider requests.
+
 ## Compose basics
 
 `compose.yaml` defines the app and database services. For `app`:
@@ -380,7 +411,8 @@ service will be introduced in a later step.
 - `artisan`: Laravel's command-line entry point.
 - `public/index.php`: the HTTP request entry point.
 - `bootstrap/app.php`: configures application startup, routes, and errors.
-- `routes/web.php`: a small JSON startup response; the forecast API comes later.
+- `routes/web.php`: a small JSON startup response.
+- `routes/api.php`: the forecast read endpoint, handled by ForecastController.
 - `config/`: compact application configuration. Cache/sessions use files and queues
   use synchronous execution, so this skeleton needs no cache/queue tables.
 - `database/migrations/`: table definitions applied by `php artisan migrate`.
