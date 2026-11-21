@@ -1,425 +1,211 @@
-# AgroApps Assignment
+# ForecastApp — AgroApps backend assignment
 
-A web application developed for the AgroApps technical assignment.
+A small PHP 8.5 / Laravel 13 application that collects Open-Meteo and WeatherAPI
+forecasts for one configured location, preserves their history in PostgreSQL 17,
+collects daily, and exposes stored forecasts through a read API.
 
-## Project status
+## Installation and setup
 
-The PHP/Composer Docker toolbox and backend Laravel skeleton are prepared.
-Dependency installation, Laravel CLI startup, and the root JSON HTTP response
-have been verified using Docker directly and through Compose. PostgreSQL 17.12
-startup and Laravel database connectivity have also been verified. Both
-forecast migrations have run, and PostgreSQL column types and constraints have
-been inspected. Both providers and the models are implemented. Live checks of
-Open-Meteo and WeatherAPI each returned 72 hourly and three daily rows for the
-configured location. The collection command's live save is verified: 144 hourly
-and six daily rows across both providers. The forecast read API is
-implemented and verified. Daily scheduling and final delivery checks remain.
-The current suite passes (60 tests, 383 assertions).
+Prerequisite: Docker with Compose and Linux containers (Docker Desktop on
+Windows). Host PHP, Composer and Node.js are not required. Run commands from
+this repository's root.
 
-## Setup and running
-
-Run commands from this repository's root. Docker Desktop must be running with
-Linux containers and Docker Compose available. Host PHP, Composer, and Node.js
-are not needed. The Docker commands below work in PowerShell or Command Prompt.
-
-Create a local environment file only if one does not already exist. In
-PowerShell:
-
-```powershell
-if (-not (Test-Path .env)) { Copy-Item .env.example .env }
-```
-
-In Command Prompt:
+Create `.env` only if it does not exist. In Windows Command Prompt:
 
 ```cmd
 if not exist .env copy .env.example .env
 ```
 
-Before starting Compose services or running one-off app containers, set your own
-`DB_PASSWORD` in `.env` as described under PostgreSQL configuration below.
-All project configuration reads environment variables without fallback values.
-For an existing `.env`, add missing non-secret entries from `.env.example` while
-preserving your existing credentials and `APP_KEY`. The example contains the
-initial values for this project. Unused integrations such as mail, Redis and
-cloud storage can remain unconfigured; their settings are not required here.
+In PowerShell:
 
-Build the PHP 8.5 / Composer 2.11.2 image, then install the dependencies declared
-in `composer.json` (skip installation if they are already installed):
+```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+```
+
+Set your own `DB_PASSWORD` and `WEATHERAPI_KEY` in `.env`. Keep the other entries
+from `.env.example`: project configuration reads them without fallback values.
+The default database name/user is `forecastapp`, with host `db` and port `5432`.
+Real credentials belong only in the ignored `.env`.
+
+For a fresh installation:
 
 ```sh
 docker compose build app
 docker compose run --rm app composer install --no-interaction
-```
-
-The `.:/app` bind mount shares the folder containing `compose.yaml` with `/app`
-inside the container. Source edits are immediately available there. Installed
-dependencies and writable runtime files also remain in this shared folder;
-their generated contents are ignored by Git.
-Composer creates `vendor/` (installed PHP packages, ignored by Git) and
-`composer.lock` (exact package versions, to be tracked). Subsequent installations
-use the lockfile. This setup does not automatically migrate or reset a database.
-
-Verify that Laravel's command-line tool starts:
-
-```sh
-docker compose run --rm app php artisan --version
-```
-
-Expected output starts with `Laravel Framework 13.`.
-
-## PostgreSQL configuration
-
-For an existing `.env`, add/update these database settings while keeping the
-existing `APP_KEY` and other settings:
-
-```dotenv
-DB_CONNECTION=pgsql
-DB_HOST=db
-DB_PORT=5432
-DB_DATABASE=forecastapp
-DB_USERNAME=forecastapp
-DB_PASSWORD=
-```
-
-Set `DB_PASSWORD` to your own password in the ignored `.env` before first startup.
-The example leaves it blank; configuration has no fallback database credentials
-or API keys. If PostgreSQL is already initialized, changing `.env` alone does not
-change its stored role password; update the role password to match as well.
-`db` is the Compose service hostname: from the app container,
-`localhost` refers to the app container itself.
-
-The Dockerfile installs `pdo_pgsql`, PHP's PostgreSQL driver, using the `libpq`
-client development library. Rebuild the app image after this Dockerfile change.
-PostgreSQL 17 runs separately in the `db` service, with no host port published.
-The named `postgres_data` volume retains database files across normal container
-replacement and `docker compose down` / `up` cycles. App source still uses the
-existing `.:/app` bind mount.
-
-Compose waits for `pg_isready` to report the database healthy before starting
-`app`. This also applies when a one-off `run app ...` command starts its
-dependency. The app reads its DB settings through Laravel's `.env` loading;
-Compose supplies the matching initialization settings to PostgreSQL.
-The Compose file references environment variables only for these settings; it
-contains no hardcoded database name, username, or password fallback. Set them
-in the ignored `.env` before starting the services.
-
-After startup, verify that Laravel can connect without creating tables:
-
-```sh
-docker compose exec app php artisan db:show
-```
-
-The expected database is `forecastapp` on PostgreSQL. This step does not run
-migrations; the forecast tables are added separately. The PostgreSQL connection
-uses UTC for timestamp handling.
-
-Before testing HTTP routes, generate Laravel's application key once if `APP_KEY`
-is empty in `.env`:
-
-```sh
 docker compose run --rm app php artisan key:generate
+docker compose run --rm app php artisan migrate
+docker compose up -d
 ```
 
-This stores Laravel's encryption/signing key in the ignored `.env`. Retain an
-existing key on later starts. Laravel reads `.env` from the bind-mounted project;
-no separate Compose `env_file` is required for this app-only step.
+Generate `APP_KEY` only when it is empty; retain an existing key. The temporary
+`run app` commands start the database dependency as needed. Migrations create
+the forecast tables and Laravel's migration-tracking table before scheduling starts.
 
-If the earlier manual `docker run` server is still running, stop it with Ctrl+C
-to free port 8000. Start the development server through Compose:
+Services:
 
-```sh
-docker compose up --build
-```
+- `app`: Laravel development HTTP server at http://localhost:8000.
+- `db`: PostgreSQL, accessible inside Compose without a published host port.
+- `scheduler`: the same PHP image running `php artisan schedule:work`.
 
-Keep the terminal running and visit [http://localhost:8000](http://localhost:8000).
-The root route returns `{"name":"ForecastApp","status":"ok"}` with the name
-coming from `APP_NAME`. `/up` is Laravel's startup health route. Stop the server
-with Ctrl+C. The root response verifies HTTP startup; use `db:show` separately to
-verify database connectivity. Collection and the forecast API come later.
+The `.:/app` bind mount shares source, installed dependencies and runtime files
+with the containers. PostgreSQL files use the persistent `postgres_data` named
+volume. `docker compose down` stops/removes containers and the network while
+retaining that volume. Changing `.env` does not change an already-initialized
+PostgreSQL role password; update the role separately if changing its password.
 
-## Forecast configuration
+### Forecast settings
 
-`config/forecast.php` reads all its values from `.env`, with no fallback values.
-For collection and scheduling, add the five `FORECAST_*` entries below. The
-values shown are the approved initial settings, also included in `.env.example`:
+The example uses Chalastra, Thessaloniki. Change these entries in `.env`:
 
 | Variable | Initial value | Purpose |
 |---|---|---|
-| `FORECAST_LAT` | `40.626430` | Collection latitude in Chalastra, Thessaloniki |
-| `FORECAST_LON` | `22.732910` | Collection longitude |
-| `FORECAST_LOCATION_TIMEZONE` | `Europe/Athens` | Local calendar dates for the three-day forecast window |
-| `FORECAST_COLLECTION_TIME` | `06:00` | Daily collection time, using 24-hour `HH:MM` format |
-| `FORECAST_SCHEDULE_TIMEZONE` | `Europe/Athens` | Time zone used for the collection schedule |
-| `WEATHERAPI_KEY` | Unset | Required credential for WeatherAPI collection |
+| `FORECAST_LAT` | `40.626430` | Latitude |
+| `FORECAST_LON` | `22.732910` | Longitude |
+| `FORECAST_LOCATION_TIMEZONE` | `Europe/Athens` | Local forecast dates |
+| `FORECAST_COLLECTION_TIME` | `06:00` | Daily collection time, `HH:MM` |
+| `FORECAST_SCHEDULE_TIMEZONE` | `Europe/Athens` | Scheduled time zone |
+| `WEATHERAPI_KEY` | Blank | Your WeatherAPI credential |
 
-For an existing `.env`, add all five forecast settings and your own WeatherAPI
-key before using that provider. Keep existing database credentials and `APP_KEY`.
-The key belongs only in the ignored `.env`. Application code will read these
-settings through `config('forecast.location.lat')`, for example, rather than
-calling `env()` directly. Coordinates remain strings to retain decimal precision.
+Forecasts cover today, tomorrow and the day after in the location time zone.
+The command resolves that window once for both providers. Application/database
+timestamps remain UTC; the location and schedule time zones have separate roles.
 
-The location and schedule time zones have separate purposes; Laravel and
-PostgreSQL remain on UTC for timestamps. The forecast horizon stays today,
-tomorrow, and the day after in the location time zone. Settings alone do not call
-providers or start a collection schedule. The collector and scheduler come later.
+### Collection and daily execution
 
-## Open-Meteo provider
-
-`app/Weather/ForecastProvider.php` defines the small common provider interface.
-Its `fetch` method accepts coordinates and one start date in the location time
-zone, returning `hourly` and `daily` arrays of rows in the database field shape.
-The collector will resolve this date once for both providers and save the rows;
-the adapter itself only requests and normalizes data.
-
-In `OpenMeteoProvider`, `fetch()` coordinates three steps: `requestForecast()`
-performs the HTTP request and captures the receipt time; `hourlyRows()` maps
-hour-specific fields to UTC rows; `dailyRows()` maps provider daily summaries to
-date-only rows. Both mapping methods use the same collection/provider/coordinate
-fields. The mappings are explicit, with no resolution-dependent field switching.
-
-`OpenMeteoProvider` requests hourly `temperature_2m` / `precipitation` and daily
-`temperature_2m_mean` / `precipitation_sum`, explicitly selecting °C and mm.
-Hourly precipitation covers the preceding hour; timestamps retain the provider's
-labels. Daily values remain provider-supplied summaries. Configured coordinates
-are retained even when the provider's grid-cell coordinates differ.
-[Open-Meteo API documentation](https://open-meteo.com/en/docs).
-
-Unix timestamps and explicit hourly bounds preserve the three local dates,
-including 71/73-hour windows around daylight-saving changes. Open-Meteo uses a
-fixed request-time UTC offset for daily boundaries; its daily summaries therefore
-remain provider-defined 24-hour aggregates across DST. The adapter preserves the
-provider's daily labels, filters to the selected dates, and rejects incomplete
-coverage. It does not recompute daily values from hourly rows.
-
-All rows from a response share its received UTC `collected` timestamp. NULL
-measurements stay unavailable; zero stays zero. Malformed responses and unexpected
-units are rejected. Each request has a 10-second timeout and at most two attempts:
-retry network failures/timeouts or HTTP 5xx once after one second; do not retry
-HTTP 4xx/429. Redirects are disabled. Errors contain a provider/status description
-rather than raw response bodies or URLs.
-
-The free endpoint does not need a key. Its non-commercial limits include 10,000
-calls/day, 5,000/hour and 600/minute, and attribution is required. Data source:
-[Open-Meteo](https://open-meteo.com/), under [its terms](https://open-meteo.com/en/terms).
-
-## WeatherAPI provider
-
-`WeatherApiProvider` implements the same interface and straightforward flow:
-`requestForecast()`, `hourlyRows()`, then `dailyRows()`. It reads
-`config('forecast.weatherapi.key')`, populated from `.env` without a fallback,
-and reports a missing key before sending a request. Authentication sends the key
-as the provider's required HTTPS request parameter; errors omit raw URLs,
-response messages and chained transport exceptions.
-[WeatherAPI authentication](https://www.weatherapi.com/docs/authentication/).
-
-The request uses coordinates, `days=3`, and disables unused alerts/air quality.
-Hourly `temp_c` / `precip_mm` become `temp` / `prec`; `time_epoch` becomes UTC
-`time`. Daily `avgtemp_c` / `totalprecip_mm` supply the agreed mean temperature
-and precipitation total, with the provider's `date` retained. Configured
-coordinates are stored rather than the matched location's rounded coordinates.
-[Forecast fields](https://www.weatherapi.com/docs/forecast-api/).
-
-The response location's time zone must match the configured location zone. The
-adapter selects the shared three local dates and rejects incomplete coverage,
-including a date-window shift across midnight. Epoch hours preserve DST when
-supplied correctly; missing or duplicate hours are rejected rather than invented.
-DST behavior is tested with synthetic responses, not live transition-day data.
-The same received-UTC timestamp, NULL/zero and bounded retry policies apply.
-
-The free plan currently includes three-day hourly/daily forecasts and 100,000
-calls/month. Live verification confirmed the configured key can access all three
-days. [WeatherAPI pricing](https://www.weatherapi.com/pricing).
-Failures report HTTP status and, when present, a numeric provider error code;
-the collector will log them later. [Error codes](https://www.weatherapi.com/docs/error-codes/).
-WeatherAPI documents hourly precipitation as an amount for that forecast hour;
-Open-Meteo explicitly describes a preceding-hour sum. Provider labels are
-preserved, so direct interval equivalence should not be assumed.
-
-## Forecast migrations
-
-With the services running, apply the migrations and check their status:
-
-```sh
-docker compose exec app php artisan migrate
-docker compose exec app php artisan migrate:status
-```
-
-The two migration files create `hourly_forecasts` and `daily_forecasts`. Laravel
-also creates its standard `migrations` table to track which files have run.
-Both forecast tables contain only `id`, `collected`, `provider`, `lat`, `lon`,
-`time`, `temp`, and `prec`:
-
-- `id` is an automatically generated integer primary key.
-- `collected` is a response-received UTC timestamp with microsecond precision.
-- `provider` is a required string of up to 50 characters (`open_meteo` or `weatherapi`).
-- Coordinates use `DECIMAL(9,6)` and are stored directly in every row.
-- Hourly `time` is a UTC timestamp; daily `time` is a location-local calendar date.
-- `temp` and `prec` use nullable `DECIMAL(8,2)`: NULL means unavailable, zero means
-  a reported zero. Daily values are provider-supplied mean temperature in °C and
-  total precipitation in mm; hourly values remain hour-specific.
-- A unique constraint on `(collected, provider, lat, lon, time)` prevents
-  duplicates within one response while allowing later collections to be retained.
-
-Timestamps use PostgreSQL `timestamp with time zone`; the Laravel connection uses
-UTC. Capturing response receipt times belongs to the later collection code.
-Migrations define storage and constraints; they do not fetch or insert forecasts.
-
-`App\Models\HourlyForecast` and `App\Models\DailyForecast` provide Eloquent access
-to the matching tables. Their fillable fields are the seven forecast fields;
-IDs are generated by PostgreSQL. Automatic `created_at`/`updated_at` handling is
-disabled. Date storage preserves microseconds, daily dates serialize as
-`YYYY-MM-DD`, and collected/hourly timestamps serialize in UTC. Decimal casts
-return fixed-precision strings (six places for coordinates, two for measurements)
-while preserving NULL measurements. The application time zone stays UTC;
-collection code must normalize hourly and collection timestamps to UTC.
-
-Migration rollback and re-application were verified in a disposable PostgreSQL
-database, which was removed afterward. Repeatable persistence tests are described
-below.
-
-## Collecting forecasts
-
-After migrations, collect and save forecasts with:
+For an immediate collection:
 
 ```sh
 docker compose exec app php artisan forecast:collect
 ```
 
-`app/Console/Commands/CollectForecasts.php` holds the orchestration in one class.
-Laravel supplies the two provider objects to its `handle()` method. The command
-validates configured coordinates/time zone and resolves today's local date once
-for both providers. Each response's hourly and daily rows are inserted in one
-database transaction. Any save failure rolls back that response; the other
-provider is still attempted and its successful data is preserved.
+The command calls each provider and saves all its hourly/daily rows in one
+transaction. A failure rolls back that response and preserves the other provider's
+successful data. It logs provider outcomes, committed counts, safe errors and a
+summary. Exit status is `0` when both succeed, `1` otherwise. API reads do not
+trigger collection.
 
-New collections append history. An exact repeated response is rejected by the
-database unique constraint instead of overwriting existing rows. Provider receipt
-timestamps are preserved; the command does not replace them with a start time.
-The command adds no HTTP retries or database-save retries of its own.
+`routes/console.php` schedules this same command daily at the configured time.
+Keep Docker and the containers running at that time; missed runs while stopped
+are not replayed. No collection is triggered immediately when the scheduler starts.
+Laravel's standard cache lock prevents overlapping scheduled executions. Run only
+one scheduler service.
 
-Console output and application logs report each provider, committed row counts,
-safe failure reasons and a final summary. Failed responses count as zero saved
-rows. Exit status is `0` when both succeed, `1` if either fails or required
-location configuration is invalid. Database errors report SQLSTATE without SQL
-bindings; API keys are redacted from provider failure reasons. Scheduling is
-added separately; collection currently runs only when this command is invoked.
+Inspect the schedule and runner:
 
-## Read API
+```sh
+docker compose exec app php artisan schedule:list --timezone=Europe/Athens
+docker compose logs scheduler
+```
 
-Use `GET /api/forecasts` with required `resolution=hourly` or `resolution=daily`:
+Scheduled command output is appended to `storage/logs/forecast-collection.log`
+in the bind-mounted project. After changing schedule settings, run
+`docker compose restart scheduler`. The configured 06:00 time avoids Athens'
+ambiguous/skipped daylight-saving transition hours.
+
+### Read API
 
 ```sh
 curl "http://localhost:8000/api/forecasts?resolution=hourly"
 curl "http://localhost:8000/api/forecasts?resolution=daily"
 ```
 
-Responses are plain JSON arrays containing all stored rows for the selected
-resolution, with no pagination metadata. Rows are ordered by newest `collected`
-first, then forecast `time` ascending and `id` ascending for stable ordering.
-The response grows as forecast history accumulates.
+`resolution` is required and accepts only `hourly` or `daily`. Missing/invalid
+values return HTTP `422` JSON with an `errors.resolution` field.
 
-Every row contains `id`, `collected`, `provider`, `lat`, `lon`, `time`, `temp`
-and `prec`. All stored collections are available, including older predictions
-for the same forecast time. Collection/hourly timestamps are UTC ISO strings;
-daily `time` is `YYYY-MM-DD`. Decimals are fixed-precision JSON strings and
-unavailable measurements are JSON null. A reported zero remains `"0.00"`.
+The response is a plain JSON array of **all stored rows** for that resolution,
+including `collected` and older collections. Empty storage returns `[]`.
+Ordering is collection time descending, then forecast time and ID ascending.
+There is no pagination or optional filtering; response size grows with history.
 
-Missing or invalid resolution returns HTTP `422` JSON with a field error under
-`errors.resolution`, including when opened directly in a browser. The controller
-only validates resolution, selects the model and reads stored rows; API
-requests never call providers or trigger collection. No provider key is required
-to read already-stored forecasts. Empty storage returns HTTP 200 with `[]`.
+Each row contains `id`, `collected`, `provider`, `lat`, `lon`, `time`, `temp`
+and `prec`. Timestamps serialize as UTC ISO strings; daily `time` is a local
+`YYYY-MM-DD` date. Decimals serialize as fixed-precision strings. Unavailable
+measurements are JSON null; actual zero remains `"0.00"`.
 
-## Running tests
+### Tests and checks
 
-PHPUnit and Mockery are development dependencies installed by `composer install`.
-With the Compose services running, create the dedicated test database once:
+Create the dedicated test database once (use your configured database username
+if you changed it; skip creation if it already exists):
 
 ```sh
 docker compose exec db createdb -U forecastapp forecastapp_test
-```
-
-Use your configured `DB_USERNAME` instead of `forecastapp` if you changed it.
-Skip this command if the test database already exists. Keep the normal database
-settings in `.env`; `phpunit.xml` selects `forecastapp_test` for tests and reuses
-the connection credentials. No separate environment file is needed.
-
-Run the tests:
-
-```sh
 docker compose exec app vendor/bin/phpunit
 ```
 
-`tests/Feature/ForecastPersistenceTest.php` checks duplicate rejection, preservation
-of earlier collections, NULL versus zero measurements, and date/decimal output
-through both models (eight test cases). Laravel's `RefreshDatabase` prepares the
-test tables and rolls back each test's inserts. The test database is reserved for disposable test data;
-its tables can be recreated. A check in `tests/TestCase.php` requires the testing
-environment and the actual PostgreSQL database `forecastapp_test` before database
-refresh can run. Tests do not call weather providers.
+PHPUnit and Mockery are development dependencies installed by Composer. Tests
+use `forecastapp_test`, with a guard before Laravel refreshes its tables. They
+cover provider normalization/retries, history and uniqueness, transaction rollback,
+provider failure isolation, API behavior, and configured winter/summer scheduling.
+External HTTP and clocks are faked; tests do not require live keys or modify the
+development forecast database.
 
-`tests/Feature/OpenMeteoProviderTest.php` adds 18 cases with fake HTTP responses:
-field mapping, receipt timestamps, missing/malformed data, DST boundaries, timeout
-settings and the approved retry limits. No live key or network call is needed.
-
-`tests/Feature/WeatherApiProviderTest.php` adds 18 fake-response cases for field
-mapping, receipt time, missing configuration, date coverage, DST, malformed data,
-retry limits and secret-safe failures. Tests use a fake key, not the real one.
-
-`tests/Feature/CollectForecastsTest.php` tests collection with mocked providers
-and real PostgreSQL transactions: preserving receipt timestamps and history,
-one shared date window across midnight, duplicate rejection, provider isolation,
-rollback of a response's hourly rows when daily insertion fails, committed counts,
-exit statuses, missing location settings and API-key redaction.
-
-`tests/Feature/ForecastApiTest.php` checks required-resolution errors, both table
-selections, collection history, date/decimal/null output, returning all rows
-without pagination, empty storage and no outgoing provider requests.
-
-## Compose basics
-
-`compose.yaml` defines the app and database services. For `app`:
-
-- `build: .` builds the root Dockerfile and `image` names the result.
-- `ports` maps localhost port 8000 to port 8000 in the container.
-- `volumes: .:/app` shares the project directory rather than copying source into
-  the image. It matches the Dockerfile's `/app` working directory.
-- `command` runs the same Laravel development server already tested manually.
-
-For `db`, `image` selects PostgreSQL 17, `environment` uses the `.env` database
-settings, `volumes` retains database files, and `healthcheck` tests readiness.
-`app.depends_on` waits for that healthy state before starting the app.
-
-Useful commands, with the app running:
+Other useful checks:
 
 ```sh
+docker compose config --quiet
+docker compose exec app php artisan migrate:status
 docker compose ps
-docker compose exec app php artisan route:list
-docker compose logs app
-docker compose down
 ```
 
-Use `run --rm app ...` for a temporary one-off container, including initial setup
-before the server starts. Use `exec app ...` to run a command inside the existing
-running app container. `down` removes this project's containers/network while
-keeping the source, installed packages, and named database volume. The scheduler
-service will be introduced in a later step.
+## Implementation choices and trade-offs
 
-## Current structure
+- Laravel supplies the HTTP client, validation, ORM, transactions, command runner
+  and scheduler. PHPUnit/Mockery keep behavioral tests repeatable.
+- Two straightforward provider classes implement a small shared interface. Each
+  owns its request and explicit hourly/daily mappings. One Artisan command
+  coordinates them; one controller reads stored rows.
+- `hourly_forecasts` and `daily_forecasts` have generated integer IDs, required
+  `collected`, provider VARCHAR(50), coordinates DECIMAL(9,6), resolution-specific
+  `time`, and nullable `temp`/`prec` DECIMAL(8,2). Coordinates are stored directly;
+  there are no separate provider/location/run tables.
+- Unique `(collected, provider, lat, lon, time)` prevents repeating the same
+  response while retaining new collections. `collected` is captured separately
+  when each response arrives, with microsecond precision. Old history is never
+  overwritten. Both resolutions from a response share this timestamp.
+- Daily temperature is the provider-supplied mean in °C; precipitation is its
+  daily total in mm. Hourly values remain hour-specific. Missing values remain
+  NULL, and invalid/incomplete responses are rejected.
+- Requests have a 10-second timeout per attempt and at most one retry after one
+  second, only for network failures/timeouts or HTTP 5xx. HTTP 4xx/429 and failed
+  database saves are not retried. Raw provider errors/URLs are not logged, and
+  the WeatherAPI key is redacted from collection failures.
+- The development server and source bind mount keep this local assignment easy
+  to run. They are not a production HTTP deployment configuration.
 
-- `composer.json`: declares Laravel and configures PHP class loading.
-- `artisan`: Laravel's command-line entry point.
-- `public/index.php`: the HTTP request entry point.
-- `bootstrap/app.php`: configures application startup, routes, and errors.
-- `routes/web.php`: a small JSON startup response.
-- `routes/api.php`: the forecast read endpoint, handled by ForecastController.
-- `config/`: compact application configuration. Cache/sessions use files and queues
-  use synchronous execution, so this skeleton needs no cache/queue tables.
-- `database/migrations/`: table definitions applied by `php artisan migrate`.
-- `app/Models/`: the hourly and daily forecast models used for database access.
-- `app/Weather/`: the common interface and Open-Meteo/WeatherAPI adapters.
-- `storage/`: writable runtime directories; their generated contents are ignored.
+## Incomplete requirements and verification limits
 
-Frontend assets, example user code, and default user/cache/jobs migrations are
-omitted from this backend skeleton. The agreed forecast tables are created by
-the migrations above. No external weather requests are made by this setup.
+The core collection, storage, read access and daily trigger are implemented.
+Manual live collection and stored reads have been verified for both providers.
+Scheduler timing is verified with a fake clock, `schedule:list` and runner startup;
+the next real 06:00 execution has not been observed by waiting overnight.
+A final clean-machine installation has not been repeated. Stopped containers do
+not catch up missed collections. These operational limits are intentionally kept
+simple for this assignment.
+
+## Next steps with more time
+
+- Support multiple configured locations and additional provider/variable mappings.
+- Add optional history filters/export and retention/indexing as stored data grows.
+- Add production HTTP serving and monitoring appropriate to the deployment.
+
+## Additional notes
+
+Open-Meteo maps hourly `temperature_2m` / `precipitation` and daily
+`temperature_2m_mean` / `precipitation_sum`. WeatherAPI maps hourly `temp_c` /
+`precip_mm` and daily `avgtemp_c` / `totalprecip_mm`.
+[Open-Meteo documentation](https://open-meteo.com/en/docs),
+[WeatherAPI documentation](https://www.weatherapi.com/docs/forecast-api/).
+
+Provider time labels are preserved. Open-Meteo describes hourly precipitation as
+a preceding-hour sum; WeatherAPI documents an hourly amount without the same
+explicit boundary definition. Open-Meteo daily summaries use its fixed request-time
+UTC offset and 24-hour aggregation, including across DST. Unix hours and explicit
+bounds preserve the selected local-date window; daily summaries are not recomputed.
+Synthetic tests cover 71/73-hour local windows; actual live transition-day behavior
+has not been verified. Incomplete hour coverage is rejected rather than invented.
+
+Data attribution: [Open-Meteo](https://open-meteo.com/). Its free API is for
+non-commercial use, requires attribution, and currently limits requests to 10,000
+per day, 5,000 per hour and 600 per minute; see [terms](https://open-meteo.com/en/terms).
+WeatherAPI's current free plan includes three forecast days and 100,000 calls/month;
+see [pricing](https://www.weatherapi.com/pricing). Keep real keys out of Git and logs.

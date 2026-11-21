@@ -11,6 +11,15 @@ services:
       db:
         condition: service_healthy
 
+  scheduler:
+    image: forecastapp-php:local
+    volumes:
+      - .:/app
+    command: php artisan schedule:work
+    depends_on:
+      db:
+        condition: service_healthy
+
   db:
     image: postgres:17-alpine
     environment:
